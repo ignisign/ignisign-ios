@@ -20,23 +20,25 @@ it, simply add the following line to your Podfile:
 pod 'ignisign-ios'
 ```
 
-Classe principale: Pods/Development Pods/Ignisign
-    - Contient les structs pour les différents paramètres d'initialisation.
-    - Fonction debugPrint pour l'affichage conditionnel.
-    - Pour utiliser Ignisign depuis un ViewController (exemple das SignContractViewController):
-        1. Définir une instance de Ignisign comme une webview
-        2. Définir une instance de WKWebViewConfiguration, qui va permettre d'écouter à l'intérieur de la webview.
-        3. Définir une instance de IgnisignSignatureSessionDimensions
-        4. Définir une instance de IgnisignJSSignatureSessionsDisplayOptions
-        5. Définir une instance de IgnisignInitParams
-        6. Appeler setValues
-        7. Appeler initSignatureSession
-        8. Le ViewController doit étendre IgnisignJS_SignatureSession_Callbacks pour implémenter les callbacks de la session.
-        
-        
-Récupération des contrats:
-    - Classe IgnisignAPI pour fetcher.
-    - La base URL est définie dans Config.
-    - L'affichage est fait dans la vue ListContractsViewConroller
-    - Un détail si la vue est modifiée, toutes les vues ajoutées à la "cellule" doivent l'etre sur self.contentView et non pas sur self.view, les interactions ne fonctionnent pas sinon.
-    - Un pull to refresh permet de mettre la liste à jour avec de potentiels nouveaux contrats.
+
+Main class: `Pods/Development Pods/Ignisign`
+
+- Contains structs for various initialization parameters.
+- debugPrint function for conditional display.
+- To use Ignisign from a ViewController (example in SignContractViewController):
+  1. Define an instance of Ignisign as a webview
+  2. Define an instance of WKWebViewConfiguration, which will allow listening inside the webview.
+  3. Define an instance of IgnisignSignatureSessionDimensions
+  4. Define an instance of IgnisignJSSignatureSessionsDisplayOptions
+  5. Define an instance of IgnisignInitParams
+  6. Call setValues
+  7. Call initSignatureSession
+  8. The ViewController must extend IgnisignJS_SignatureSession_Callbacks to implement the session callbacks.
+
+Retrieving contracts: 
+- IgnisignAPI class for fetching.
+- The base URL is defined in Config.
+- Display is done in the ListContractsViewController view
+- A detail if the view is modified, all views added to the "cell" must be on self.contentView and not on self.view, otherwise interactions do not work.
+- A pull to refresh allows updating the list with potential new contracts.
+
