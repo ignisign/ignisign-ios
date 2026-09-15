@@ -9,7 +9,7 @@ import Foundation
 import WebKit
 
 public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
-    var debug = true
+    var debug = false
     var ignisignClientSignUrlDefault = "https://sign.ignisign.io"
     var ignisignClientSignUrl: String?
 
@@ -27,6 +27,8 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
     var signatureSessionToken: String?
     var signatureAuthToken: String?
     var dimensions: IgnisignSignatureSessionDimensions?
+    
+    private var allowedOrigins: Set<String> = ["https://sign.ignisign.io"]
     
     private func debugPrint(_ message: String) {
         if debug {
@@ -55,13 +57,17 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
         self.env = env
         if (ignisignClientSignUrl != nil) {
             self.ignisignClientSignUrl = ignisignClientSignUrl!
+            if let url = URL(string: ignisignClientSignUrl!) {
+                let origin = "\(url.scheme ?? "https")://\(url.host ?? "")"
+                allowedOrigins.insert(origin)
+            }
         } else {
             self.ignisignClientSignUrl = ignisignClientSignUrlDefault
         }
     }
     
     public func initSignatureSession(initParams: IgnisignInitParams) {
-        debugPrint("trace ignisign ios - init Signature session called : \(initParams)")
+        debugPrint("trace ignisign ios - init Signature session called")
         signerId = initParams.signerId
         signatureRequestId = initParams.signatureRequestId
         closeOnFinish = initParams.closeInFinish
@@ -77,7 +83,7 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
             let signerAuthSecret = signerAuthToken,
             let displayOptions = displayOptions {
             let signatureSessionLink = getUrlSessionLink(signatureRequestId: signatureRequestId, signerId: signerId, signatureSessionToken: signatureSessionToken, signerAuthSecret: signerAuthSecret, displayOptions: displayOptions)
-            debugPrint("trace ignisign ios - init Signature session called load webview : \(signatureSessionLink)")
+            debugPrint("trace ignisign ios - init Signature session called load webview")
             load(URLRequest(url: URL(string: signatureSessionLink)!))
         } else {
             debugPrint("trace ignisign ios - values nil")
@@ -85,9 +91,15 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
     }
     
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        let allowedOriginsJson = allowedOrigins.map { "\"\($0)\"" }.joined(separator: ",")
         let jsCode = """
         (function() {
+            var allowedOrigins = [\(allowedOriginsJson)];
             function receiveMessage(event) {
+                if (allowedOrigins.indexOf(event.origin) === -1) {
+                    console.warn('Ignoring message from unauthorized origin:', event.origin);
+                    return;
+                }
                 window.webkit.messageHandlers.message.postMessage(JSON.stringify(event.data));
             }
             window.addEventListener("message", receiveMessage, false);
@@ -99,13 +111,13 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
 
    public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
        if message.name == "message", let messageBody = message.body as? String {
-           debugPrint("message : \(messageBody)")
+           debugPrint("message received from WebView")
            handleEvent(message: messageBody)
        }
    }
     
     private func handleEvent(message: String) {
-        debugPrint("Message received from JS: \(message)")
+        debugPrint("Message received from JS")
         if let args = jsonToMap(json: message) {
             if let type = args["type"] as? String {
                 if let data = args["data"] as? [String: Any] {
@@ -180,10 +192,7 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
         let errorCode = action.data.errorCode
         let errorContext = action.data.errorContext
         
-        debugPrint("errorCode : \(errorCode)")
-        debugPrint("errorContext : \(errorContext)")
-        debugPrint("signerId : \(signerId)")
-        debugPrint("signatureRequestId : \(signatureRequestId)")
+        debugPrint("signature request error occurred")
 
         if let signerId = signerId, let signatureRequestId = signatureRequestId {
             sessionCallbacks?.handleSignatureSessionError(errorCode: errorCode, errorContext: errorContext, signerId: signerId, signatureRequestId: signatureRequestId)
@@ -198,6 +207,10 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
         load(URLRequest(url: URL(string: "about:blank")!))
     }
     
+    // SECURITY NOTE: This method constructs a URL with authentication tokens in query parameters.
+    // While not ideal, these are short-lived session tokens required by the Ignisign web interface.
+    // HTTPS is enforced via App Transport Security to protect tokens in transit.
+    // Future improvement: Consider using POST with form data or fragment-based authentication.
     func getUrlSessionLink(signatureRequestId: String, signerId: String, signatureSessionToken: String, signerAuthSecret: String, displayOptions: IgnisignJSSignatureSessionsDisplayOptions) -> String {
             return "\(ignisignClientSignUrl!)/signature-requests/\(signatureRequestId)/signers/\(signerId)/sign?token=\(signatureSessionToken)&signerSecret=\(signerAuthSecret)&\(displayOptions.convertToQueryString())"
         }
