@@ -36,6 +36,35 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
         }
     }
     
+    private func isUrlSafe(_ urlString: String) -> Bool {
+        guard let url = URL(string: urlString) else {
+            debugPrint("Invalid URL format: \(urlString)")
+            return false
+        }
+        
+        guard let scheme = url.scheme?.lowercased() else {
+            debugPrint("URL missing scheme: \(urlString)")
+            return false
+        }
+        
+        guard scheme == "https" || (scheme == "http" && (url.host == "localhost" || url.host == "127.0.0.1")) else {
+            debugPrint("Unsafe URL scheme or host: \(urlString)")
+            return false
+        }
+        
+        if let host = url.host {
+            let urlOrigin = "\(scheme)://\(host)"
+            let isAllowed = allowedOrigins.contains(urlOrigin) || 
+                           (scheme == "http" && (host == "localhost" || host == "127.0.0.1"))
+            if !isAllowed {
+                debugPrint("URL origin not in allowedOrigins: \(urlOrigin)")
+            }
+            return isAllowed
+        }
+        
+        return false
+    }
+    
     required public init?(coder: NSCoder) {
         super.init(coder: coder)
     }
@@ -139,7 +168,11 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
                         }
                     } else if type == IgnisignBroadcastableActions.openUrl.rawValue {
                         if let url = data["url"] as? String {
-                            load(URLRequest(url: URL(string:url)!))
+                            if isUrlSafe(url), let validUrl = URL(string: url) {
+                                load(URLRequest(url: validUrl))
+                            } else {
+                                debugPrint("Blocked navigation to unsafe URL: \(url)")
+                            }
                         }
                     } else if type == IgnisignBroadcastableActions.signatureFinalized.rawValue {
                         debugPrint("trace callback - signature finalized")
