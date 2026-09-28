@@ -55,6 +55,13 @@ This SDK implements several security measures to protect sensitive data:
 - **Origin validation**: PostMessage events are validated to only accept messages from trusted Ignisign domains
 - **Default trusted origin**: `https://sign.ignisign.io`
 - **Custom origins**: When using `setValues(ignisignClientSignUrl:)`, the origin is automatically added to the allowlist
+- **URL navigation validation**: All WebView navigation requests are validated before loading
+- **Navigation policy**: WKNavigationDelegate enforces URL safety checks for all navigation types
+- **Link click protection**: User-initiated link clicks are validated against allowed origins
+- **JavaScript restrictions**: Pop-up windows blocked (`javaScriptCanOpenWindowsAutomatically = false`)
+- **Media autoplay protection**: Media requires user interaction to play
+- **Web Inspector disabled**: Web Inspector cannot attach to production WebViews (iOS 16.4+)
+- **Crash prevention**: All force-unwrapped optionals replaced with safe optional handling
 
 ### Secure Logging
 - **Debug logging disabled by default**: The `debug` flag is set to `false` in production

@@ -79,14 +79,35 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
         contentController.add(self, name: "message")
         navigationDelegate = self
         translatesAutoresizingMaskIntoConstraints = false
+        
+        configureWebViewSecurity(config: config)
+    }
+    
+    private func configureWebViewSecurity(config: WKWebViewConfiguration) {
+        config.preferences.javaScriptCanOpenWindowsAutomatically = false
+        
+        if #available(iOS 13.0, *) {
+            config.defaultWebpagePreferences.allowsContentJavaScript = true
+        }
+        
+        if #available(iOS 14.0, *) {
+            config.limitsNavigationsToAppBoundDomains = false
+        }
+        
+        config.allowsInlineMediaPlayback = true
+        config.mediaTypesRequiringUserActionForPlayback = .all
+        
+        if #available(iOS 16.4, *) {
+            isInspectable = false
+        }
     }
     
     public func setValues(appId: String, env: IgnisignApplicationEnv, ignisignClientSignUrl: String? = nil) {
         self.appId = appId
         self.env = env
-        if (ignisignClientSignUrl != nil) {
-            self.ignisignClientSignUrl = ignisignClientSignUrl!
-            if let url = URL(string: ignisignClientSignUrl!) {
+        if let customUrl = ignisignClientSignUrl {
+            self.ignisignClientSignUrl = customUrl
+            if let url = URL(string: customUrl) {
                 let origin = "\(url.scheme ?? "https")://\(url.host ?? "")"
                 allowedOrigins.insert(origin)
             }
@@ -113,7 +134,11 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
             let displayOptions = displayOptions {
             let signatureSessionLink = getUrlSessionLink(signatureRequestId: signatureRequestId, signerId: signerId, signatureSessionToken: signatureSessionToken, signerAuthSecret: signerAuthSecret, displayOptions: displayOptions)
             debugPrint("trace ignisign ios - init Signature session called load webview")
-            load(URLRequest(url: URL(string: signatureSessionLink)!))
+            guard let sessionUrl = URL(string: signatureSessionLink) else {
+                debugPrint("Failed to create URL from signature session link")
+                return
+            }
+            load(URLRequest(url: sessionUrl))
         } else {
             debugPrint("trace ignisign ios - values nil")
         }
@@ -136,6 +161,43 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
         """
          debugPrint("trace webview didFinish")
         webView.evaluateJavaScript(jsCode, completionHandler: nil)
+    }
+    
+    public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        guard let url = navigationAction.request.url else {
+            decisionHandler(.cancel)
+            return
+        }
+        
+        let urlString = url.absoluteString
+        
+        if urlString == "about:blank" {
+            decisionHandler(.allow)
+            return
+        }
+        
+        if navigationAction.navigationType == .linkActivated {
+            if let scheme = url.scheme?.lowercased(),
+               scheme == "http" || scheme == "https" {
+                if isUrlSafe(urlString) {
+                    decisionHandler(.allow)
+                } else {
+                    debugPrint("Blocked link navigation to unsafe URL: \(urlString)")
+                    decisionHandler(.cancel)
+                }
+            } else {
+                debugPrint("Blocked link with non-HTTP(S) scheme: \(urlString)")
+                decisionHandler(.cancel)
+            }
+            return
+        }
+        
+        if isUrlSafe(urlString) {
+            decisionHandler(.allow)
+        } else {
+            debugPrint("Blocked navigation to unsafe URL: \(urlString)")
+            decisionHandler(.cancel)
+        }
     }
 
    public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -237,7 +299,9 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
     }
     
     private func closeIFrame() {
-        load(URLRequest(url: URL(string: "about:blank")!))
+        if let blankUrl = URL(string: "about:blank") {
+            load(URLRequest(url: blankUrl))
+        }
     }
     
     // SECURITY NOTE: This method constructs a URL with authentication tokens in query parameters.
@@ -245,7 +309,8 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
     // HTTPS is enforced via App Transport Security to protect tokens in transit.
     // Future improvement: Consider using POST with form data or fragment-based authentication.
     func getUrlSessionLink(signatureRequestId: String, signerId: String, signatureSessionToken: String, signerAuthSecret: String, displayOptions: IgnisignJSSignatureSessionsDisplayOptions) -> String {
-            return "\(ignisignClientSignUrl!)/signature-requests/\(signatureRequestId)/signers/\(signerId)/sign?token=\(signatureSessionToken)&signerSecret=\(signerAuthSecret)&\(displayOptions.convertToQueryString())"
+            let baseUrl = ignisignClientSignUrl ?? ignisignClientSignUrlDefault
+            return "\(baseUrl)/signature-requests/\(signatureRequestId)/signers/\(signerId)/sign?token=\(signatureSessionToken)&signerSecret=\(signerAuthSecret)&\(displayOptions.convertToQueryString())"
         }
     
     func jsonToMap(json: String) -> [String: Any]? {
