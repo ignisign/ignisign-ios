@@ -53,8 +53,8 @@ This SDK implements several security measures to protect sensitive data:
 
 ### WebView Security
 - **Bridge origin validation**: postMessage events are only relayed from `https://*.ignisign.io` origins (and the origin of a custom `ignisignClientSignUrl`, port included); the native handler additionally requires the message to come from the main frame on one of those origins
-- **OPEN_URL validation**: only `https` URLs (or `http` on the configured sign URL origin) are loaded; `javascript:`, `data:`, `file:` and other schemes are rejected
-- **Navigation policy**: top-level navigations with non-HTTP(S) schemes are blocked (`about:` and `blob:` stay allowed); sub-frames are not filtered so embedded viewers and identity-provider flows keep working
+- **OPEN_URL validation**: `https://*.ignisign.io` URLs (and the configured sign URL origin) load in the WebView; other `http(s)` URLs open in Safari; `javascript:`, `data:`, `file:` and other schemes are dropped
+- **Navigation policy**: top-level and new-window navigations stay on the same IgniSign origins; other `http(s)` links open in Safari, other schemes are blocked (`about:` and `blob:` stay allowed); sub-frames are not filtered so embedded viewers and identity-provider flows keep working
 - **Crash prevention**: force-unwrapped optionals replaced with safe optional handling
 
 ### Secure Logging
@@ -64,7 +64,7 @@ This SDK implements several security measures to protect sensitive data:
 
 ### Token Handling
 - **Short-lived tokens**: Session tokens are designed to be ephemeral and request-specific
-- **HTTPS required**: ATS enforcement protects tokens in transit
+- **HTTPS required**: use an `https` sign URL; ATS is configured by your app's Info.plist, not by this SDK
 - **⚠️ Storage**: Never store authentication tokens in UserDefaults. Use iOS Keychain for persistent credential storage
 
 ### Implementation Checklist for Integrators

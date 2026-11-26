@@ -6,6 +6,7 @@
 //
 
 import Foundation
+import UIKit
 import WebKit
 
 public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
@@ -63,20 +64,29 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
         return Ignisign.origin(scheme: scheme, host: host, port: port) == configuredSignOrigin
     }
     
-    /// URLs the WebView may load at top level / via OPEN_URL: any https URL (identity
-    /// providers, bank checks, etc. are third-party), or http only for the configured sign origin.
-    /// javascript:, data:, file: and other schemes are rejected.
-    private func isUrlSafe(_ urlString: String) -> Bool {
-        guard let url = URL(string: urlString),
-              let scheme = url.scheme?.lowercased(),
+    /// URLs the WebView may load itself at top level / via OPEN_URL: https on ignisign.io or any
+    /// subdomain, or the configured sign URL origin (custom / self-hosted / local dev).
+    /// Same rule as the Android SDK.
+    private func isAllowedUrl(_ url: URL) -> Bool {
+        guard let scheme = url.scheme?.lowercased(),
+              scheme == "https" || scheme == "http",
               let host = url.host, !host.isEmpty else {
-            debugPrint("Rejected invalid URL")
             return false
         }
-        if scheme == "https" { return true }
-        if scheme == "http" && isTrustedOrigin(scheme: scheme, host: host, port: url.port) { return true }
-        debugPrint("Rejected URL with unsafe scheme or host")
-        return false
+        return isTrustedOrigin(scheme: scheme, host: host, port: url.port)
+    }
+    
+    /// Hands an http(s) URL outside IgniSign domains to the system browser instead of loading it
+    /// in the signing WebView. javascript:, data:, file: and other schemes are dropped.
+    private func openExternally(_ url: URL) {
+        guard let scheme = url.scheme?.lowercased(), scheme == "https" || scheme == "http" else {
+            debugPrint("Dropped URL with unsupported scheme")
+            return
+        }
+        debugPrint("Navigation outside IgniSign domains handed to external browser")
+        DispatchQueue.main.async {
+            UIApplication.shared.open(url, options: [:], completionHandler: nil)
+        }
     }
     
     required public init?(coder: NSCoder) {
@@ -161,10 +171,22 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
             decisionHandler(.cancel)
             return
         }
-        if scheme == "about" || scheme == "blob" || isUrlSafe(url.absoluteString) {
+        if navigationAction.targetFrame == nil {
+            // target="_blank" / window.open: no uiDelegate opens new windows, so keep IgniSign
+            // pages in this WebView and send everything else to the system browser.
+            if isAllowedUrl(url) {
+                load(navigationAction.request)
+            } else {
+                openExternally(url)
+            }
+            decisionHandler(.cancel)
+            return
+        }
+        if scheme == "about" || scheme == "blob" || isAllowedUrl(url) {
             decisionHandler(.allow)
         } else {
-            debugPrint("Blocked top-level navigation with unsafe scheme or host")
+            // Top-level navigation stays on IgniSign domains; other http(s) links open in Safari.
+            openExternally(url)
             decisionHandler(.cancel)
         }
     }
@@ -206,10 +228,14 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
                         }
                     } else if type == IgnisignBroadcastableActions.openUrl.rawValue {
                         if let url = data["url"] as? String {
-                            if isUrlSafe(url), let validUrl = URL(string: url) {
-                                load(URLRequest(url: validUrl))
+                            if let validUrl = URL(string: url) {
+                                if isAllowedUrl(validUrl) {
+                                    load(URLRequest(url: validUrl))
+                                } else {
+                                    openExternally(validUrl)
+                                }
                             } else {
-                                debugPrint("Blocked OPEN_URL with unsafe URL")
+                                debugPrint("Ignored OPEN_URL with invalid URL")
                             }
                         }
                     } else if type == IgnisignBroadcastableActions.signatureFinalized.rawValue {
