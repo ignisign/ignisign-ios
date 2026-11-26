@@ -52,16 +52,10 @@ This SDK implements several security measures to protect sensitive data:
 - **⚠️ Production apps**: Remove localhost exception and ensure all endpoints use HTTPS
 
 ### WebView Security
-- **Origin validation**: PostMessage events are validated to only accept messages from trusted Ignisign domains
-- **Default trusted origin**: `https://sign.ignisign.io`
-- **Custom origins**: When using `setValues(ignisignClientSignUrl:)`, the origin is automatically added to the allowlist
-- **URL navigation validation**: All WebView navigation requests are validated before loading
-- **Navigation policy**: WKNavigationDelegate enforces URL safety checks for all navigation types
-- **Link click protection**: User-initiated link clicks are validated against allowed origins
-- **JavaScript restrictions**: Pop-up windows blocked (`javaScriptCanOpenWindowsAutomatically = false`)
-- **Media autoplay protection**: Media requires user interaction to play
-- **Web Inspector disabled**: Web Inspector cannot attach to production WebViews (iOS 16.4+)
-- **Crash prevention**: All force-unwrapped optionals replaced with safe optional handling
+- **Bridge origin validation**: postMessage events are only relayed from `https://*.ignisign.io` origins (and the origin of a custom `ignisignClientSignUrl`, port included); the native handler additionally requires the message to come from the main frame on one of those origins
+- **OPEN_URL validation**: only `https` URLs (or `http` on the configured sign URL origin) are loaded; `javascript:`, `data:`, `file:` and other schemes are rejected
+- **Navigation policy**: top-level navigations with non-HTTP(S) schemes are blocked (`about:` and `blob:` stay allowed); sub-frames are not filtered so embedded viewers and identity-provider flows keep working
+- **Crash prevention**: force-unwrapped optionals replaced with safe optional handling
 
 ### Secure Logging
 - **Debug logging disabled by default**: The `debug` flag is set to `false` in production

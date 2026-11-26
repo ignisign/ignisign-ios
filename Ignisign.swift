@@ -28,7 +28,7 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
     var signatureAuthToken: String?
     var dimensions: IgnisignSignatureSessionDimensions?
     
-    private var allowedOrigins: Set<String> = ["https://sign.ignisign.io"]
+    private static let ignisignRootDomain = "ignisign.io"
     
     private func debugPrint(_ message: String) {
         if debug {
@@ -36,32 +36,46 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
         }
     }
     
+    /// Serialized origin (scheme://host[:port]) as reported by `event.origin` / WKSecurityOrigin.
+    private static func origin(scheme: String, host: String, port: Int?) -> String {
+        let scheme = scheme.lowercased()
+        let host = host.lowercased()
+        if let port = port, port > 0, !((scheme == "https" && port == 443) || (scheme == "http" && port == 80)) {
+            return "\(scheme)://\(host):\(port)"
+        }
+        return "\(scheme)://\(host)"
+    }
+    
+    /// Origin of the configured sign URL (custom / self-hosted / local dev), if any.
+    private var configuredSignOrigin: String? {
+        guard let url = URL(string: ignisignClientSignUrl ?? ignisignClientSignUrlDefault),
+              let scheme = url.scheme, let host = url.host else { return nil }
+        return Ignisign.origin(scheme: scheme, host: host, port: url.port)
+    }
+    
+    /// Trusted Ignisign origins: https on ignisign.io or any subdomain, plus the configured sign URL origin.
+    private func isTrustedOrigin(scheme: String, host: String, port: Int?) -> Bool {
+        let scheme = scheme.lowercased()
+        let host = host.lowercased()
+        if scheme == "https" && (host == Ignisign.ignisignRootDomain || host.hasSuffix("." + Ignisign.ignisignRootDomain)) {
+            return true
+        }
+        return Ignisign.origin(scheme: scheme, host: host, port: port) == configuredSignOrigin
+    }
+    
+    /// URLs the WebView may load at top level / via OPEN_URL: any https URL (identity
+    /// providers, bank checks, etc. are third-party), or http only for the configured sign origin.
+    /// javascript:, data:, file: and other schemes are rejected.
     private func isUrlSafe(_ urlString: String) -> Bool {
-        guard let url = URL(string: urlString) else {
-            debugPrint("Invalid URL format: \(urlString)")
+        guard let url = URL(string: urlString),
+              let scheme = url.scheme?.lowercased(),
+              let host = url.host, !host.isEmpty else {
+            debugPrint("Rejected invalid URL")
             return false
         }
-        
-        guard let scheme = url.scheme?.lowercased() else {
-            debugPrint("URL missing scheme: \(urlString)")
-            return false
-        }
-        
-        guard scheme == "https" || (scheme == "http" && (url.host == "localhost" || url.host == "127.0.0.1")) else {
-            debugPrint("Unsafe URL scheme or host: \(urlString)")
-            return false
-        }
-        
-        if let host = url.host {
-            let urlOrigin = "\(scheme)://\(host)"
-            let isAllowed = allowedOrigins.contains(urlOrigin) || 
-                           (scheme == "http" && (host == "localhost" || host == "127.0.0.1"))
-            if !isAllowed {
-                debugPrint("URL origin not in allowedOrigins: \(urlOrigin)")
-            }
-            return isAllowed
-        }
-        
+        if scheme == "https" { return true }
+        if scheme == "http" && isTrustedOrigin(scheme: scheme, host: host, port: url.port) { return true }
+        debugPrint("Rejected URL with unsafe scheme or host")
         return false
     }
     
@@ -79,27 +93,6 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
         contentController.add(self, name: "message")
         navigationDelegate = self
         translatesAutoresizingMaskIntoConstraints = false
-        
-        configureWebViewSecurity(config: config)
-    }
-    
-    private func configureWebViewSecurity(config: WKWebViewConfiguration) {
-        config.preferences.javaScriptCanOpenWindowsAutomatically = false
-        
-        if #available(iOS 13.0, *) {
-            config.defaultWebpagePreferences.allowsContentJavaScript = true
-        }
-        
-        if #available(iOS 14.0, *) {
-            config.limitsNavigationsToAppBoundDomains = false
-        }
-        
-        config.allowsInlineMediaPlayback = true
-        config.mediaTypesRequiringUserActionForPlayback = .all
-        
-        if #available(iOS 16.4, *) {
-            isInspectable = false
-        }
     }
     
     public func setValues(appId: String, env: IgnisignApplicationEnv, ignisignClientSignUrl: String? = nil) {
@@ -107,10 +100,6 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
         self.env = env
         if let customUrl = ignisignClientSignUrl {
             self.ignisignClientSignUrl = customUrl
-            if let url = URL(string: customUrl) {
-                let origin = "\(url.scheme ?? "https")://\(url.host ?? "")"
-                allowedOrigins.insert(origin)
-            }
         } else {
             self.ignisignClientSignUrl = ignisignClientSignUrlDefault
         }
@@ -145,13 +134,12 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
     }
     
     public func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        let allowedOriginsJson = allowedOrigins.map { "\"\($0)\"" }.joined(separator: ",")
+        let configuredOriginJson = configuredSignOrigin.map { "\"\($0)\"" } ?? "null"
         let jsCode = """
         (function() {
-            var allowedOrigins = [\(allowedOriginsJson)];
+            var configuredOrigin = \(configuredOriginJson);
             function receiveMessage(event) {
-                if (allowedOrigins.indexOf(event.origin) === -1) {
-                    console.warn('Ignoring message from unauthorized origin:', event.origin);
+                if (!/^https:\\/\\/([a-z0-9-]+\\.)*ignisign\\.io$/.test(event.origin) && event.origin !== configuredOrigin) {
                     return;
                 }
                 window.webkit.messageHandlers.message.postMessage(JSON.stringify(event.data));
@@ -164,43 +152,31 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
     }
     
     public func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
-        guard let url = navigationAction.request.url else {
+        // Sub-frames (embedded viewers, identity providers, about:srcdoc, blob:) are not filtered here.
+        if let targetFrame = navigationAction.targetFrame, !targetFrame.isMainFrame {
+            decisionHandler(.allow)
+            return
+        }
+        guard let url = navigationAction.request.url, let scheme = url.scheme?.lowercased() else {
             decisionHandler(.cancel)
             return
         }
-        
-        let urlString = url.absoluteString
-        
-        if urlString == "about:blank" {
-            decisionHandler(.allow)
-            return
-        }
-        
-        if navigationAction.navigationType == .linkActivated {
-            if let scheme = url.scheme?.lowercased(),
-               scheme == "http" || scheme == "https" {
-                if isUrlSafe(urlString) {
-                    decisionHandler(.allow)
-                } else {
-                    debugPrint("Blocked link navigation to unsafe URL: \(urlString)")
-                    decisionHandler(.cancel)
-                }
-            } else {
-                debugPrint("Blocked link with non-HTTP(S) scheme: \(urlString)")
-                decisionHandler(.cancel)
-            }
-            return
-        }
-        
-        if isUrlSafe(urlString) {
+        if scheme == "about" || scheme == "blob" || isUrlSafe(url.absoluteString) {
             decisionHandler(.allow)
         } else {
-            debugPrint("Blocked navigation to unsafe URL: \(urlString)")
+            debugPrint("Blocked top-level navigation with unsafe scheme or host")
             decisionHandler(.cancel)
         }
     }
 
    public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+       // The handler is exposed to every frame: only accept messages from a trusted main frame.
+       let origin = message.frameInfo.securityOrigin
+       guard message.frameInfo.isMainFrame,
+             isTrustedOrigin(scheme: origin.`protocol`, host: origin.host, port: origin.port) else {
+           debugPrint("Ignored bridge message from untrusted frame")
+           return
+       }
        if message.name == "message", let messageBody = message.body as? String {
            debugPrint("message received from WebView")
            handleEvent(message: messageBody)
@@ -233,7 +209,7 @@ public class Ignisign: WKWebView, WKScriptMessageHandler, WKNavigationDelegate {
                             if isUrlSafe(url), let validUrl = URL(string: url) {
                                 load(URLRequest(url: validUrl))
                             } else {
-                                debugPrint("Blocked navigation to unsafe URL: \(url)")
+                                debugPrint("Blocked OPEN_URL with unsafe URL")
                             }
                         }
                     } else if type == IgnisignBroadcastableActions.signatureFinalized.rawValue {
