@@ -70,14 +70,14 @@ class ListContractsViewController: UIViewController, UITableViewDataSource, Cont
         let ignisignApi = IgnisignAPI()
         ignisignApi.fetchContractContexts { objects, error in
             if let contracts = objects {
-                print("objects : \(objects)")
+                print("Fetched \(contracts.count) contracts")
                 DispatchQueue.main.async {
                     self.items.removeAll()
                     self.items.append(contentsOf: contracts)
                     self.tableView.reloadData()
                 }
             } else if let err = error {
-                print("error : \(error)")
+                print("Error fetching contracts: \(err.localizedDescription)")
             }
         }
     }
@@ -87,7 +87,9 @@ class ListContractsViewController: UIViewController, UITableViewDataSource, Cont
     }
     
     func tableView(_ tableView: UITableView, cellForRowAt indexPath: IndexPath) -> UITableViewCell {
-        let cell = tableView.dequeueReusableCell(withIdentifier: ContractTableViewCell.identifier, for: indexPath) as! ContractTableViewCell
+        guard let cell = tableView.dequeueReusableCell(withIdentifier: ContractTableViewCell.identifier, for: indexPath) as? ContractTableViewCell else {
+            return UITableViewCell()
+        }
         cell.delegate = self
         cell.indexPath = indexPath
         cell.textLabel?.text = items[indexPath.row].documentId
